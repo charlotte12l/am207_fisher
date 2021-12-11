@@ -15,31 +15,15 @@ class FIL(abc.ABC):
         self.X = None
         self.y = None
 
-    # @abc.abstractmethod
-    # def grad_x_grad_w_loss(self,x, y):
-    #     """
-    #     Grad_x_Grad_w
-    #     """
-        
-    # @abc.abstractmethod
-    # def grad_y_grad_w_loss(self, x, y):
-    #     """
-    #     Grad_y_Grad_w
-    #     """
-
-    # def hessian(self, x, y):
-    #     """
-    #     Hessian for single example
-    #     """
-
-    # @abc.abstractmethod
-    # def hessian_dataset(self):
-    #     """
-    #     Hessian for entire dataset
-    #     """
 
     def compute_all_fils(self):
         self.all_fils = torch.linalg.norm(self.jacobian_dataset(), ord=2, dim=(1, 2))
+
+        # self.all_fils_max = [np.linalg.norm(self.jacobian_max(x_linear[i], y_linear[i]), 2) for i in range(len(x_linear))]
+        
+        # print("ORIGINAL", self.all_fils)
+        # print("MAX", self.all_fils_max)
+
         return self.all_fils
 
 
@@ -86,6 +70,7 @@ class FIL_Linear_lxy(FIL):
 
         self.X = data["features"]
         self.y = data["targets"]
+
         XTX = (self.X).T @ self.X
 
         # However never use XTXdiag
@@ -118,15 +103,38 @@ class FIL_Linear_lxy(FIL):
         return self.jacobian(self.X, self.y)
     
     def jacobian(self, X, y):
+        # print("X", X)
+        # print("y", y)
+        # print("theta", self.theta)
+        # print("A", self.A)
         r = (X @ self.theta - y)[:, None, None]
-        XA = X @ self.A # self.A is Hessian Dataset
-        # -((wx-y)*hessian+X@hessian*w)
-        JX = -(r * self.A.unsqueeze(0) + XA.unsqueeze(2) * self.theta[None, None, :])
-        # -hessian*(-x)
-        JY = XA.unsqueeze(2)
+        XA = X @ self.A # self.A is inverse Hessian Dataset
+        # grad_x_w = inv_Hessian @ ((wx-y)+xw)
+        # -((wx-y)*inv_hessian+X@inv_hessian*w)
 
+        JX = -(r * self.A.unsqueeze(0) + XA.unsqueeze(2) * self.theta[None, None, :])
+
+        # -inv_hessian*(-x)
+        JY = XA.unsqueeze(2)
         return torch.cat([JX, JY], dim=2)
 
+    def jacobian_max(self, X, y):
+        theta = self.theta.numpy()
+        A = self.A.numpy()
+        # X = X.numpy()
+        # y = y.numpy()
+        print(A.shape, X.shape, theta.shape, y.shape)
+        JX = A @ np.outer(X, theta) 
+        JX += A * (np.dot(theta, X) - y)
+        # JX += A@ (np.dot(theta, X) - y)
+
+        jx_1 = A @ np.outer(X, theta) 
+        jx_2 = A @ (np.dot(theta, X) - y)
+
+        Jy = A @ (-X.reshape(-1, 1))
+        # return (JX, Jy, jx_1, jx_2)
+        return np.hstack((JX, Jy))
+        
     # note: no need for hessian per example
     def hessian_dataset(self):
         return self.A
@@ -190,3 +198,30 @@ class FIL_Logistic_lxy(FIL):
  
         JY =  (XHinv).unsqueeze(2)
         return torch.cat([JX, JY], dim=2)
+
+'''
+class FIL_Linear_Reweighted(FIL_Linear):
+    def __init__(self, w, X, y, lam=1, sigma=1):
+        super().__init__(w, X, y, lam, sigma)
+
+    def iterative_reweighted(self, X, y, loss_func, num_iters, noise_std, lam):
+        n = len(y)
+        sample_weights = np.ones(n) # number of training examples
+
+        def f_to_minimize(w, omega):
+            # print(w.shape)
+            # print(X.shape)
+            # print(X @ w)
+            return np.dot(omega, loss_func(np.dot(X, w), y)) + n * lam * np.linalg.norm(w)/ 2
+
+        for t in range(num_iters):
+            f = lambda w : f_to_minimize(w, sample_weights)
+            w_opt = scipy.optimize.minimize(f, np.zeros(len(self.w))).x
+            # print("w_opt: ", w_opt)
+            w_prime = w_opt + np.random.normal(0, noise_std ** 2, size=len(w_opt))
+            self.w = w_prime
+            fils = self.compute_all_fils() # need to be able to adjust w for this
+            sample_weights = n * np.divide(sample_weights, fils) / sum(np.divide(sample_weights, fils))
+        
+        return w_prime
+'''
