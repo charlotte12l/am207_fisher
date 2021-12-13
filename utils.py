@@ -1,11 +1,16 @@
 import numpy as np
 import torch
+import logging
+import seaborn as sns
+import matplotlib.pyplot as plt
+import torchvision.datasets as datasets
+
 
 def sigmoid(a):
-        """
-        Sigmoid Function
-        """
-        return 1/(1 + np.exp(-a))
+    """
+    Sigmoid Function
+    """
+    return 1/(1 + np.exp(-a))
 
 def add_bias(X):
     """
@@ -37,6 +42,29 @@ def obtain_train_test_mnist(train_X, train_y, test_X, test_y, first_digit, secon
 
     return X_MNIST_train, y_MNIST_train, X_MNIST_test, y_MNIST_test
 
+
+
+
+
+def load_mnist_dataset(train, num_classes):
+    mnist_trainset = datasets.MNIST(root='./data', train=train, download=False, transform=None)
+
+    features, targets = mnist_trainset.data, mnist_trainset.targets
+
+    orig_img = features.clone()
+
+    features = features.float().div_(255.)
+    features = features.reshape(features.size(0), -1)
+
+    mask = targets.lt(num_classes)
+    features = features[mask, :]
+    targets = targets[mask]
+    orig_img = orig_img[mask, :, :]
+
+    features.div_(features.norm(dim=1).max())
+    targets = targets.float()
+
+    return {"features": features, "targets": targets}, orig_img
 
 def pca(data, num_dims=None, mapping=None):
     """
@@ -79,3 +107,48 @@ def pca(data, num_dims=None, mapping=None):
         original_data["features"] = reduced_data
         reduced_data = original_data
     return reduced_data, mapping
+
+
+def line_plot(
+        Y, X, xlabel=None, ylabel=None, ymax=None, ymin=None,
+        xmax=None, xmin=None, filename=None, legend=None, errors=None,
+        xlog=False, ylog=False, size=None, marker="s"):
+    colors = sns.cubehelix_palette(Y.shape[0], start=2, rot=0, dark=0, light=.5)
+    plt.clf()
+    if legend is None:
+        legend = [None] * Y.shape[0]
+
+    if size is not None:
+        plt.figure(figsize=size)
+
+    for n in range(Y.shape[0]):
+        x = X[n, :] if X.ndim == 2 else X
+        plt.plot(x, Y[n, :], label=legend[n], color=colors[n],
+                marker=marker, markersize=5)
+        if errors is not None:
+            plt.fill_between(
+                x, Y[n, :] - errors[n, :], Y[n, :] + errors[n, :],
+                alpha=0.1, color=colors[n])
+
+    if ymax is not None:
+        plt.ylim(top=ymax)
+    if ymin is not None:
+        plt.ylim(bottom=ymin)
+    if xmax is not None:
+        plt.xlim(right=xmax)
+    if xmin is not None:
+        plt.xlim(left=xmin)
+
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    if legend[0] is not None:
+        plt.legend()
+
+    axes = plt.gca()
+    if xlog:
+        axes.semilogx(10.)
+    if ylog:
+        axes.semilogy(10.)
+
+    if filename is not None:
+        plt.savefig(filename, dpi=1200, bbox_inches="tight")

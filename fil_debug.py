@@ -2,6 +2,7 @@ import abc
 import numpy as np
 from utils import *
 import torch
+import logging
 
 
 class FIL(abc.ABC):
@@ -65,22 +66,25 @@ class FIL_Linear_lxy(FIL):
     def __init__(self):
         super().__init__()
 
-    def train(self, data, lam=0):
+    def train(self, data, lam=0, weights=None):
         n = len(data["targets"])
 
         self.X = data["features"]
         self.y = data["targets"]
 
-        XTX = (self.X).T @ self.X
+        if weights is None:
+            weights = torch.ones(n)
+        assert len(weights) == n, "Invalid number of weights"
+        self.weights = weights
 
-        # However never use XTXdiag
+        XTX = (weights[:, None] * self.X).T @ self.X
         XTXdiag = torch.diagonal(XTX)
         XTXdiag += (n * lam)
 
-        b = self.X.T @ self.y
+        b = self.X.T @ (weights * self.y)
         theta = torch.solve(b[:, None], XTX)[0].squeeze(1)
 
-        print("THETA: {}".format(theta))
+        # print("theta: {}".format(theta))
         # Need A to compute the Jacobian.
         # hessian_dataset
         A = torch.inverse(XTX)
@@ -93,30 +97,40 @@ class FIL_Linear_lxy(FIL):
     def set_params(self, theta):
         self.theta = theta
 
+    def set_weights(self, weights):
+        self.weights = weights
+
     def predict(self, X, regression=False):
         if regression:
             return X @ self.theta
         else:
             return (X @ self.theta) > 0
 
+    def loss(self, data):
+        """
+        Evaluate the loss for each example in a given dataset.
+        """
+        X = data["features"]
+        y = data["targets"].float()
+        return (X @ self.theta - y)**2 / 2
+
     def jacobian_dataset(self):
-        return self.jacobian(self.X, self.y)
+        return self.jacobian(self.X, self.y, weighted=True)
     
-    def jacobian(self, X, y):
-        # print("X", X)
-        # print("y", y)
-        # print("theta", self.theta)
-        # print("A", self.A)
+    def jacobian(self, X, y, weighted=False):
         r = (X @ self.theta - y)[:, None, None]
         XA = X @ self.A # self.A is inverse Hessian Dataset
-        # grad_x_w = inv_Hessian @ ((wx-y)+xw)
         # -((wx-y)*inv_hessian+X@inv_hessian*w)
-
         JX = -(r * self.A.unsqueeze(0) + XA.unsqueeze(2) * self.theta[None, None, :])
 
-        # -inv_hessian*(-x)
-        JY = XA.unsqueeze(2)
+        if weighted:
+            JX = self.weights[:, None, None] * JX
+            JY = (self.weights[:, None] * XA).unsqueeze(2)
+        else:
+            JY = XA.unsqueeze(2)
+        
         return torch.cat([JX, JY], dim=2)
+
 
     def jacobian_max(self, X, y):
         theta = self.theta.numpy()
@@ -144,25 +158,26 @@ class FIL_Logistic_lxy(FIL):
     def __init__(self):
         super().__init__()
 
-    def train(self, data, l2=0, init=None):
+    def train(self, data, l2=0, weights=None):
         n = len(data["targets"])
 
         self.X = data["features"]
         self.y = data["targets"].float()
 
-        # Save for the jacobian:
+        if weights is None:
+            weights = torch.ones(n)
+        assert len(weights) == n, "Invalid number of weights"
+
+        self.weights = weights
         self.l2 = n * l2
 
         theta = torch.randn(self.X.shape[1], requires_grad=True)
-        if init is not None:
-            theta.data[:] = init[:]
-
 
         crit = torch.nn.BCEWithLogitsLoss(reduction="none")
         optimizer = torch.optim.LBFGS([theta], line_search_fn="strong_wolfe")
         def closure():
             optimizer.zero_grad()
-            loss = (crit(self.X @ theta, self.y)).sum()
+            loss = (crit(self.X @ theta, self.y) * weights).sum()
             loss += (self.l2 / 2.0) * (theta**2).sum()
             loss.backward()
             return loss
@@ -176,52 +191,133 @@ class FIL_Logistic_lxy(FIL):
     def set_params(self, theta):
         self.theta = theta
 
+    def set_weights(self, weights):
+        self.weights = weights
+
     def predict(self, X, regression=False):
         return (X @ self.theta) > 0
 
+    def loss(self, data):
+        X = data["features"]
+        y = data["targets"].float()
+        return torch.nn.BCEWithLogitsLoss(reduction="none")(X @ self.theta, y)
+
     def jacobian_dataset(self):
-        return self.jacobian(self.X, self.y)
+        return self.jacobian(self.X, self.y, weighted=True)
     
-    def jacobian(self, X, y):
+    def jacobian(self, X, y, weighted=False):
+        if weighted:
+            s = (X @ self.theta).sigmoid().unsqueeze(1)
+            H = (self.weights.unsqueeze(1) * s * (1-s) * X).T @ X
+            Hdiag = torch.diagonal(H)
+            Hdiag += self.l2
+            Hinv = H.inverse()
 
-        # Compute the Hessian at theta for all X:
-        s = (X @ self.theta).sigmoid().unsqueeze(1)
-        H = (s * (1-s) * X).T @ X
-        Hdiag = torch.diagonal(H)
-        Hdiag += self.l2
-        Hinv = H.inverse()
+            # Compute the Jacobian of the gradient w.r.t. theta at each (x, y) pair
+            XHinv = X @ Hinv
+            JX = -(s * (1-s) * XHinv).unsqueeze(2) * self.theta[None, None, :]
+            JX -= (s - y.unsqueeze(1)).unsqueeze(2) * Hinv.unsqueeze(0)
+            JX = self.weights[:, None, None] * JX
+            JY =  (self.weights[:, None] * XHinv).unsqueeze(2)
+        else:
+            s = (X @ self.theta).sigmoid().unsqueeze(1)
+            H = (s * (1-s) * X).T @ X
+            Hdiag = torch.diagonal(H)
+            Hdiag += self.l2
+            Hinv = H.inverse()
 
-        # Compute the Jacobian of the gradient w.r.t. theta at each (x, y) pair
-        XHinv = X @ Hinv
-        JX = -(s * (1-s) * XHinv).unsqueeze(2) * self.theta[None, None, :]
-        JX -= (s - y.unsqueeze(1)).unsqueeze(2) * Hinv.unsqueeze(0)
- 
-        JY =  (XHinv).unsqueeze(2)
+            # Compute the Jacobian of the gradient w.r.t. theta at each (x, y) pair
+            XHinv = X @ Hinv
+            JX = -(s * (1-s) * XHinv).unsqueeze(2) * self.theta[None, None, :]
+            JX -= (s - y.unsqueeze(1)).unsqueeze(2) * Hinv.unsqueeze(0)
+            JY =  (XHinv).unsqueeze(2)
         return torch.cat([JX, JY], dim=2)
 
-'''
-class FIL_Linear_Reweighted(FIL_Linear):
-    def __init__(self, w, X, y, lam=1, sigma=1):
-        super().__init__(w, X, y, lam, sigma)
 
-    def iterative_reweighted(self, X, y, loss_func, num_iters, noise_std, lam):
-        n = len(y)
-        sample_weights = np.ones(n) # number of training examples
+def compute_accuracy(model, data, regression=False):
+    X, y = data["features"], data["targets"].clone()
+    if regression:
+        acc = model.loss(data).mean().item()
+    else:
+        predictions = model.predict(X)
 
-        def f_to_minimize(w, omega):
-            # print(w.shape)
-            # print(X.shape)
-            # print(X @ w)
-            return np.dot(omega, loss_func(np.dot(X, w), y)) + n * lam * np.linalg.norm(w)/ 2
-
-        for t in range(num_iters):
-            f = lambda w : f_to_minimize(w, sample_weights)
-            w_opt = scipy.optimize.minimize(f, np.zeros(len(self.w))).x
-            # print("w_opt: ", w_opt)
-            w_prime = w_opt + np.random.normal(0, noise_std ** 2, size=len(w_opt))
-            self.w = w_prime
-            fils = self.compute_all_fils() # need to be able to adjust w for this
-            sample_weights = n * np.divide(sample_weights, fils) / sum(np.divide(sample_weights, fils))
+        # Linear Regression for MNIST, we preprocessed y[y==0]=-1 before training, 
+        # however the prediction is 0/1 not -1/1
+        y[y==-1] = 0 
         
-        return w_prime
-'''
+        acc = ((predictions == y).float()).mean().item()
+    return acc
+
+
+def iterative_reweighted_fil(model, train_data, test_data, iters, l2=0, regression=False):
+    model.train(train_data, l2)
+
+    train_accuracy = compute_accuracy(model, train_data, regression=regression)
+    test_accuracy = compute_accuracy(model, test_data, regression=regression)
+
+    if regression:
+        logging.info(f"Weighted model MSE train {train_accuracy:.3f},"
+            f" test: {test_accuracy:.3f}.")
+    else:
+        logging.info(f"Weighted model accuracy train {train_accuracy:.3f},"
+            f" test: {test_accuracy:.3f}.")
+
+    # Compute the Fisher information loss, eta, for each example in the
+    # training set:
+    logging.info("Computing unweighted etas on training set...")
+    etas = model.compute_all_fils()
+    logging.info(f"etas max: {etas.max().item():.4f},"
+        f" mean: {etas.mean().item():.4f}, std: {etas.std().item():.4f}.")
+    
+    # Reweight using the fisher information loss:
+    updated_fi = etas.reciprocal().detach()
+    maxs = [etas.max().item()]
+    means = [etas.mean().item()]
+    stds = [etas.std().item()]
+    train_accs = [train_accuracy]
+    test_accs = [test_accuracy]
+    all_weights = [torch.ones(len(updated_fi))]
+    for i in range(iters):
+        logging.info(f"Iter {i}: Training weighted model...")
+        updated_fi *= (len(updated_fi) / updated_fi.sum())
+        # TODO does it make sense to renormalize after clamping?
+        updated_fi.clamp_(min=0, max=float("inf"))
+        weights = torch.ones(len(train_data["targets"]))
+        weights[:] = updated_fi.data
+        model.train(train_data, l2, weights=weights.detach())
+
+        # Check predictions of weighted model:
+        train_accuracy = compute_accuracy(model, train_data, regression=regression)
+        test_accuracy = compute_accuracy(model, test_data, regression=regression)
+        if regression:
+            logging.info(f"Weighted model MSE train {train_accuracy:.3f},"
+                f" test: {test_accuracy:.3f}.")
+        else:
+            logging.info(f"Weighted model accuracy train {train_accuracy:.3f},"
+                f" test: {test_accuracy:.3f}.")
+
+        # model.set_weights(weights)
+        weighted_etas = model.compute_all_fils()
+        updated_fi /= weighted_etas
+        maxs.append(weighted_etas.max().item())
+        means.append(weighted_etas.mean().item())
+        stds.append(weighted_etas.std().item())
+        train_accs.append(train_accuracy)
+        test_accs.append(test_accuracy)
+        all_weights.append(weights)
+        logging.info(f"Weighted etas max: {maxs[-1]:.4f},"
+            f" mean: {means[-1]:.4f},"
+            f" std: {stds[-1]:.4f}.")
+
+    results = {
+        "weights" : weights.tolist(),
+        "etas" : etas.tolist(),
+        "weighted_etas" : weighted_etas.tolist(),
+        "eta_maxes" : maxs,
+        "eta_means" : means,
+        "eta_stds" : stds,
+        "train_accs" : train_accs,
+        "test_accs" : test_accs,
+    }
+
+    return results
