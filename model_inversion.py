@@ -18,8 +18,8 @@ import dataloading
 
 # set up logger:
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
+# logger.setLevel(logging.INFO)
+logger.setLevel(logging.CRITICAL)
 
 INVERTERS = ["baseline", "ideal", "fredrikson14", "whitebox", "all"]
 

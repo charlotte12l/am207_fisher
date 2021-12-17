@@ -18,8 +18,8 @@ import dataloading
 
 # set up logger:
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
+# logger.setLevel(logging.INFO)
+logger.setLevel(logging.CRITICAL)
 
 def compute_accuracy(model, data, regression=False):
     X, y = data["features"], data["targets"]

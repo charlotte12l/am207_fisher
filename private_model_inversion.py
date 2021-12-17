@@ -19,8 +19,8 @@ from model_inversion import fredrikson14_inverter, WhiteboxInverter, compute_met
 
 # set up logger:
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
+# logger.setLevel(logging.INFO)
+logger.setLevel(logging.CRITICAL)
 
 def eval_model(model, data, regression):
     predictions = model.predict(data["features"], regression=regression)
