@@ -34,6 +34,23 @@ Create an Anaconda environment and install the dependencies:
     Implement differential privacy with Fisher Information Loss 
 
 
+## AM207 Requirements
+- At least one clear working pedagogical example demonstrating the problem the paper is claiming to solve.
+    - We implement FIL for two toy datasetsfor both linear and logistic regression as pedagogical examples demonstrating successfully the ability of FIL to characterize data points that are more prone to leakage in `experiments.ipynb`.
+
+- At lease a bare bones implementation of the model/algorithm/solution.
+    - We've successfully implemented FIL and IRFIL in `fil.py` 
+
+- Demonstration on at least one instance that your implementation solves the problem.
+    - On toy dataset, FIL and successfully characterize data points that are more prone to leakage.
+
+- Demonstration on at least one instance the failure mode of the model/algorithm/solution, with an explanation for why failure occurred (is the dataset too large? Did you choose a bad hyper parameter?). The point of this is to point out edge cases to the user.
+    - We give instances of successes and failures of applying FIL for the MNIST dataset.
+
+- Extensions
+    - FIL for OOD and overfitting detection.
+    - Differential Privacy.
+
 ## Reference
 
 Measuring Data Leakage in Machine-Learning Models with Fisher Information. Hannun, Awni and Guo, Chuan and van der Maaten, Laurens.
