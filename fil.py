@@ -1,54 +1,53 @@
-import abc
 import numpy as np
 import scipy
+from sklearn.linear_model import LogisticRegression, Ridge
 from utils import *
 
-class FIL(abc.ABC):
+class FIL():
     X = None
     y = None
     w = None
     lam = None
     sigma = None
     n = None
+    d = None
     all_fils = None
+    total_fil = None
+    clf = None
 
-    def __init__(self, w, X, y, lam=1, sigma=1):
-        self.w = w
-        self.X = X
-        self.y = y
+    def __init__(self, lam=1, sigma=1):
         self.lam = lam
         self.sigma = sigma
-        self.n = len(self.X)
+        
+    def predict(self, X):
+        """
+        Return predictions on data X
+        """
+        return self.clf.predict(X)
 
-    @abc.abstractmethod
-    def grad_x_grad_w_loss(self,x, y):
+    def grad_x_grad_w_loss(self, x, y):
         """
         Grad_x_Grad_w
         """
         
-    @abc.abstractmethod
     def grad_y_grad_w_loss(self, x, y):
         """
         Grad_y_Grad_w
         """
-
-    def hessian(self, x, y):
-        """
-        Hessian for single example
-        """
-
-    @abc.abstractmethod
-    def hessian_dataset(self):
-        """
-        Hessian for entire dataset
-        """
-
+        
     def jacobian(self, x, y):
         """
         Jacobian for single example
         """
         # print(self.hessian_dataset())
-        return -np.linalg.inv(self.hessian_dataset()) @ np.hstack((self.grad_x_grad_w_loss(x, y), self.grad_y_grad_w_loss(x, y)))
+        return -self.inverse_hessian @ np.hstack((self.grad_x_grad_w_loss(x, y), self.grad_y_grad_w_loss(x, y)))
+    
+    def compute_all_weights_irfil(self):
+        all_weights = np.zeros(self.n)
+        for i in range(self.n):
+            J = self.jacobian(self.X[i], self.y[i])
+            all_weights[i] = np.sqrt(np.linalg.norm(J.T @ J / self.sigma**2))
+        return all_weights
 
     def fil(self, x, y):
         """
@@ -58,12 +57,17 @@ class FIL(abc.ABC):
 
     def compute_all_fils(self):
         """
-        Computes all Fisher Information for all data points
+        Computes all Fisher Information for each data point
         """
         self.all_fils = np.zeros(self.n)
         for i in range(self.n):
             self.all_fils[i] = self.fil(self.X[i], self.y[i])
         return self.all_fils
+    
+    def compute_total_fil(self):
+        """
+        Computess Fisher Information for entire dataset
+        """
         
     def print_fil(self):
         """
@@ -80,41 +84,91 @@ class FIL(abc.ABC):
         Returns n data points with highest FIL
         """
         ind = np.argpartition(self.all_fils, -n)[-n:]
-        sorted_ind = ind[np.argsort(self.all_fils[ind])]
-        return self.X[sorted_ind], self.all_fils[sorted_ind]
+#         sorted_ind = ind[np.argsort(self.all_fils[ind])]
+        return ind
 
     def lowest_fils(self, n):
         """
         Returns n data points with lowest FIL
         """
         ind = np.argpartition(-self.all_fils, -n)[-n:]
-        sorted_ind = ind[np.argsort((-self.all_fils)[ind])]
-        return self.X[sorted_ind], self.all_fils[sorted_ind]
+#         sorted_ind = ind[np.argsort((-self.all_fils)[ind])]
+        return ind
+
+    def irfil(self, X, y, T, noise):
+        weights = np.ones(len(X))
+        for t in range(T):
+            self.train(X, y, weights=weights)
+            self.w += np.random.normal(loc=0, scale=noise, size=self.d)
+            self.compute_inverse_hessian()
+            etas = self.compute_all_weights_irfil()
+            num = np.divide(weights, etas)
+            weights = self.n * num / np.sum(num)
+        return weights
 
 
 class FIL_Logistic(FIL):
-    def __init__(self, w, X, y, lam=1, sigma=1):
-        super().__init__(w, X, y, lam, sigma)
-
+    def __init__(self, lam=1, sigma=1):
+        super().__init__(lam, sigma)
+        
+    def train(self, X, y, weights=None):
+        self.X = X
+        self.y = y
+        assert len(self.X.shape) == 2, "Invalid data shape"
+        self.n, self.d = X.shape[0], X.shape[1]
+        
+        # train model
+        self.clf = LogisticRegression(fit_intercept=False, C=1/max(self.lam * self.n, 1e-5), solver='lbfgs').fit(X, y, sample_weight=weights)
+        
+        # find weights
+        self.w = np.squeeze(self.clf.coef_)
+        
+        self.compute_inverse_hessian()
+    
+    def compute_inverse_hessian(self):
+        # find inverse hessian
+        self.inverse_hessian = np.linalg.inv((sigmoid(self.X @ self.w) * (1 - sigmoid(self.X @ self.w)) * self.X.T) @ self.X)
+    
+    def compute_accuracy(self, X, y):
+        return self.clf.score(X, y)
+        
     def grad_x_grad_w_loss(self, x, y):
         wtx = np.dot(self.w,x)
         return sigmoid(wtx) * (1 - sigmoid(wtx)) * np.outer(x, self.w) + (sigmoid(wtx) - y)
     
     def grad_y_grad_w_loss(self, x, y):
         return -x.reshape(-1, 1)
-
-    def hessian(self, x, y):
-        wtx = np.dot(self.w,x)
-        return sigmoid(wtx) * (1 - sigmoid(wtx)) * np.outer(x, x)
     
-    def hessian_dataset(self):
-        # how to vectorize this??
-        return np.sum(np.array([self.hessian(x, y) for x, y in zip(self.X, self.y)]), axis=0) + self.lam * self.n
-
+    def decision_boundary(self, xmin, xmax):
+        b = self.w[0]
+        w1, w2 = self.w[1:]
+        c = -b/w2
+        m = -w1/w2
+        xd = np.array([xmin, xmax])
+        yd = m*xd + c
+        return xd, yd
 
 class FIL_Linear(FIL):
-    def __init__(self, w, X, y, lam=1, sigma=1):
-        super().__init__(w, X, y, lam, sigma)
+    def __init__(self, lam=1, sigma=1):
+        super().__init__(lam, sigma)
+        
+    def train(self, X, y, weights=None):
+        self.X = X
+        self.y = y
+        assert len(self.X.shape) == 2, "Invalid data shape"
+        self.n, self.d = X.shape[0], X.shape[1]
+        
+        # train model
+        self.clf = Ridge(alpha=self.n * self.lam / 2, fit_intercept=False).fit(X, y, sample_weight=weights)
+        
+        # find weights
+        self.w = np.squeeze(self.clf.coef_)
+        
+        # find inverse hessian
+        self.compute_inverse_hessian()
+        
+    def compute_inverse_hessian(self):
+        self.inverse_hessian = np.linalg.inv(np.transpose(self.X) @ self.X + self.n * self.lam * np.eye(self.d))
 
     def grad_x_grad_w_loss(self, x, y):
         wtx = np.dot(self.w,x)
@@ -122,55 +176,3 @@ class FIL_Linear(FIL):
     
     def grad_y_grad_w_loss(self, x, y):
         return -x.reshape(-1, 1)
-    
-    # note: no need for hessian per example
-
-    def hessian_dataset(self):
-        return np.transpose(self.X) @ self.X + self.n * self.lam
-
-# class FIL_Logistic_Reweighted(FIL_Logistic):
-#     def __init__(self, w, X, y, lam=1, sigma=1):
-#         super().__init__(w, X, y, lam, sigma)
-
-#     def iterative_reweighted(self, X, y, loss_func, num_iters, noise_std, lam):
-#         n = len(y)
-#         sample_weights = np.ones(n) # number of training examples
-
-#         def f_to_minimize(w, omega):
-#             return np.dot(omega, loss_func(X @ w.reshape(-1, 1), y)) + n * lam * np.linalg.norm(w)/ 2
-
-#         for t in range(num_iters):
-#             f = lambda w : f_to_minimize(w, sample_weights)
-#             w_opt = scipy.optimize.minimize(f, np.zeros(n)).x
-#             print("w_opt: ", w_opt)
-#             w_prime = w_opt + np.random.normal(0, noise_std ** 2, size=len(w_opt))
-#             self.w = w_prime
-#             fils = self.compute_all_fils() # need to be able to adjust w for this
-#             sample_weights = n * np.divide(sample_weights / fils) / sum(np.divide(sample_weights / fils))
-        
-#         return w_prime
-
-class FIL_Linear_Reweighted(FIL_Linear):
-    def __init__(self, w, X, y, lam=1, sigma=1):
-        super().__init__(w, X, y, lam, sigma)
-
-    def iterative_reweighted(self, X, y, loss_func, num_iters, noise_std, lam):
-        n = len(y)
-        sample_weights = np.ones(n) # number of training examples
-
-        def f_to_minimize(w, omega):
-            # print(w.shape)
-            # print(X.shape)
-            # print(X @ w)
-            return np.dot(omega, loss_func(np.dot(X, w), y)) + n * lam * np.linalg.norm(w)/ 2
-
-        for t in range(num_iters):
-            f = lambda w : f_to_minimize(w, sample_weights)
-            w_opt = scipy.optimize.minimize(f, np.zeros(len(self.w))).x
-            # print("w_opt: ", w_opt)
-            w_prime = w_opt + np.random.normal(0, noise_std ** 2, size=len(w_opt))
-            self.w = w_prime
-            fils = self.compute_all_fils() # need to be able to adjust w for this
-            sample_weights = n * np.divide(sample_weights, fils) / sum(np.divide(sample_weights, fils))
-        
-        return w_prime

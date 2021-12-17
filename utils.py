@@ -1,10 +1,9 @@
 import numpy as np
 import torch
-import logging
 import seaborn as sns
 import matplotlib.pyplot as plt
+import requests, gzip, os, hashlib
 import torchvision.datasets as datasets
-
 
 def sigmoid(a):
     """
@@ -30,6 +29,9 @@ def remove_bias(X_bias):
 col = lambda c : "red" if c == 1 else "blue"
 
 def obtain_train_test_mnist(train_X, train_y, test_X, test_y, first_digit, second_digit):
+    """
+    Obtain MNIST dataset with only two digits
+    """
     X_first_train = train_X[train_y == first_digit].reshape(-1, 784)
     X_second_train = train_X[train_y == second_digit].reshape(-1, 784)
     X_MNIST_train = np.vstack((X_first_train, X_second_train))
@@ -44,8 +46,10 @@ def obtain_train_test_mnist(train_X, train_y, test_X, test_y, first_digit, secon
 
 
 
-
-
+'''
+Below are utils functions for fil_paper_experiments.ipynb, 
+some were borrowed from authors' implementation
+'''
 def load_mnist_dataset(train, num_classes):
     mnist_trainset = datasets.MNIST(root='./data', train=train, download=False, transform=None)
 

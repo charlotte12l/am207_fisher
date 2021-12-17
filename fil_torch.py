@@ -1,7 +1,7 @@
 # Some codes in this file were borrowed from the paper's original implementation
 # Reference: https://github.com/facebookresearch/fisher_information_loss
 
-# We implemented another version purely based on our understanding of the paper in fil.py
+# We implemented another version *purely based on our understanding* of the paper on our own in fil.py
 # This file was used for initial verification of paper's results, 
 # and because of parallel working, exploration on OOD probe also uses this implementation.
 
@@ -26,7 +26,7 @@ class FIL(abc.ABC):
 
     def compute_all_fils(self):
         """
-        Fisher Information Loss for the whole dataset
+        Example-level Fisher Information Loss for the whole dataset
         """
         self.all_fils = torch.linalg.norm(self.jacobian_dataset(), ord=2, dim=(1, 2))
 
@@ -35,7 +35,7 @@ class FIL(abc.ABC):
 
     def fil(self, x, y):
         """
-        Fisher Information Loss for single example
+        Example-level Fisher Information Loss for single example
         """
         return torch.linalg.norm(self.jacobian(x, y), ord=2, dim=(1, 2))
 
@@ -46,6 +46,9 @@ class FIL_Linear_torch(FIL):
         super().__init__()
 
     def train(self, data, lam=0, weights=None):
+        """
+        Training
+        """
         n = len(data["targets"])
 
         self.X = data["features"]
@@ -68,12 +71,14 @@ class FIL_Linear_torch(FIL):
         self.theta = theta
 
     def jacobian_total(self):
+        """
+        Full Fisher Information Loss for the whole dataset
+        """
         cated = None
         for i in range(len(self.X)):
             x = self.X[i].clone()
             x = x[None, :]
             y = self.y[i].clone()
-            # y = torch.reshape(y, (-1,1))
             y = torch.reshape(y, (1,))
             jac = self.jacobian(x, y) 
             #print('x:', x.shape,'y:', y.shape, 'jac:', jac.shape)
@@ -106,9 +111,15 @@ class FIL_Linear_torch(FIL):
         return (X @ self.theta - y)**2 / 2
 
     def jacobian_dataset(self):
+        """
+        Jacobian for the whole dataset
+        """
         return self.jacobian(self.X, self.y, weighted=True)
     
     def jacobian(self, X, y, weighted=False):
+        """
+        Jacobian for a single example
+        """
         r = (X @ self.theta - y)[:, None, None]
         XA = X @ self.A # self.A is inverse Hessian Dataset
         # -((wx-y)*inv_hessian+X@inv_hessian*w)
@@ -122,9 +133,6 @@ class FIL_Linear_torch(FIL):
         
         return torch.cat([JX, JY], dim=2)
 
-
-    def hessian_dataset(self):
-        return self.A
 
 
 class FIL_Logistic_torch(FIL):
@@ -167,6 +175,11 @@ class FIL_Logistic_torch(FIL):
     def predict(self, X, regression=False):
         return (X @ self.theta) > 0
 
+    def loss(self, data):
+        X = data["features"]
+        y = data["targets"].float()
+        return torch.nn.BCEWithLogitsLoss(reduction="none")(X @ self.theta, y)
+    
     def jacobian_dataset(self):
         return self.jacobian(self.X, self.y, weighted=True)
 
@@ -265,8 +278,7 @@ def iterative_reweighted_fil(model, train_data, test_data, iters, l2=0, regressi
     for i in range(iters):
         logging.info(f"Iter {i}: Training weighted model...")
         updated_fi *= (len(updated_fi) / updated_fi.sum())
-        # TODO does it make sense to renormalize after clamping?
-        updated_fi.clamp_(min=0, max=float("inf"))
+
         weights = torch.ones(len(train_data["targets"]))
         weights[:] = updated_fi.data
         model.train(train_data, l2, weights=weights.detach())
