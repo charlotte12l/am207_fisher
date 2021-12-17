@@ -1,3 +1,10 @@
+# Some codes in this file were borrowed from the paper's original implementation
+# Reference: https://github.com/facebookresearch/fisher_information_loss
+
+# We implemented another version purely based on our understanding of the paper in fil.py
+# This file was used for initial verification of paper's results, 
+# and because of parallel working, exploration on OOD probe also uses this implementation.
+
 import abc
 import numpy as np
 from utils import *
@@ -18,12 +25,10 @@ class FIL(abc.ABC):
 
 
     def compute_all_fils(self):
+        """
+        Fisher Information Loss for the whole dataset
+        """
         self.all_fils = torch.linalg.norm(self.jacobian_dataset(), ord=2, dim=(1, 2))
-
-        # self.all_fils_max = [np.linalg.norm(self.jacobian_max(x_linear[i], y_linear[i]), 2) for i in range(len(x_linear))]
-        
-        # print("ORIGINAL", self.all_fils)
-        # print("MAX", self.all_fils_max)
 
         return self.all_fils
 
@@ -33,36 +38,10 @@ class FIL(abc.ABC):
         Fisher Information Loss for single example
         """
         return torch.linalg.norm(self.jacobian(x, y), ord=2, dim=(1, 2))
-    
-    
-    def print_fil(self):
-        """
-        Prints fisher information loss for all examples
-        """
-        for i in range(self.n):
-            if self.all_fils is not None:
-                print("Point: {}, Value: {}, FIL: {}".format(self.X[i], self.y[i], np.round(self.all_fils[i], 3)))
-            else:
-                print("Point: {}, Value: {}, FIL: {}".format(self.X[i], self.y[i], np.round(self.fil(self.X[i], self.y[i]), 3)))
-
-    def highest_fils(self, n):
-        """
-        Returns n data points with highest FIL
-        """
-        ind = np.argpartition(self.all_fils, -n)[-n:]
-        sorted_ind = ind[np.argsort(self.all_fils[ind])]
-        return self.X[sorted_ind], self.all_fils[sorted_ind]
-
-    def lowest_fils(self, n):
-        """
-        Returns n data points with lowest FIL
-        """
-        ind = np.argpartition(-self.all_fils, -n)[-n:]
-        sorted_ind = ind[np.argsort((-self.all_fils)[ind])]
-        return self.X[sorted_ind], self.all_fils[sorted_ind]
 
 
-class FIL_Linear_lxy(FIL):
+
+class FIL_Linear_torch(FIL):
     def __init__(self):
         super().__init__()
 
@@ -84,21 +63,33 @@ class FIL_Linear_lxy(FIL):
         b = self.X.T @ (weights * self.y)
         theta = torch.solve(b[:, None], XTX)[0].squeeze(1)
 
-        # print("theta: {}".format(theta))
-        # Need A to compute the Jacobian.
-        # hessian_dataset
         A = torch.inverse(XTX)
         self.A = A
         self.theta = theta
 
+    def jacobian_total(self):
+        cated = None
+        for i in range(len(self.X)):
+            x = self.X[i].clone()
+            x = x[None, :]
+            y = self.y[i].clone()
+            # y = torch.reshape(y, (-1,1))
+            y = torch.reshape(y, (1,))
+            jac = self.jacobian(x, y) 
+            #print('x:', x.shape,'y:', y.shape, 'jac:', jac.shape)
+            if cated == None:
+                cated = jac
+            else:
+                cated = torch.cat((cated, jac), dim=2)
+        
+        #print('cated:', cated.shape)
+        return torch.linalg.norm(cated, ord=2,  dim=(1, 2))
+        
     def get_params(self):
         return self.theta
 
     def set_params(self, theta):
         self.theta = theta
-
-    def set_weights(self, weights):
-        self.weights = weights
 
     def predict(self, X, regression=False):
         if regression:
@@ -132,29 +123,11 @@ class FIL_Linear_lxy(FIL):
         return torch.cat([JX, JY], dim=2)
 
 
-    def jacobian_max(self, X, y):
-        theta = self.theta.numpy()
-        A = self.A.numpy()
-        # X = X.numpy()
-        # y = y.numpy()
-        print(A.shape, X.shape, theta.shape, y.shape)
-        JX = A @ np.outer(X, theta) 
-        JX += A * (np.dot(theta, X) - y)
-        # JX += A@ (np.dot(theta, X) - y)
-
-        jx_1 = A @ np.outer(X, theta) 
-        jx_2 = A @ (np.dot(theta, X) - y)
-
-        Jy = A @ (-X.reshape(-1, 1))
-        # return (JX, Jy, jx_1, jx_2)
-        return np.hstack((JX, Jy))
-        
-    # note: no need for hessian per example
     def hessian_dataset(self):
         return self.A
 
 
-class FIL_Logistic_lxy(FIL):
+class FIL_Logistic_torch(FIL):
     def __init__(self):
         super().__init__()
 
@@ -191,19 +164,31 @@ class FIL_Logistic_lxy(FIL):
     def set_params(self, theta):
         self.theta = theta
 
-    def set_weights(self, weights):
-        self.weights = weights
-
     def predict(self, X, regression=False):
         return (X @ self.theta) > 0
 
-    def loss(self, data):
-        X = data["features"]
-        y = data["targets"].float()
-        return torch.nn.BCEWithLogitsLoss(reduction="none")(X @ self.theta, y)
-
     def jacobian_dataset(self):
         return self.jacobian(self.X, self.y, weighted=True)
+
+    def jacobian_total(self):
+        cated = None
+        for i in range(len(self.X)):
+            x = self.X[i].clone()
+            x = x[None, :]
+            y = self.y[i].clone()
+            # y = torch.reshape(y, (-1,1))
+            y = torch.reshape(y, (1,))
+            jac = self.jacobian(x, y) 
+            #print('x:', x.shape,'y:', y.shape, 'jac:', jac.shape)
+            if cated == None:
+                cated = jac
+            else:
+                cated = torch.cat((cated, jac), dim=2)
+        
+        #print('cated:', cated.shape)
+        return torch.linalg.norm(cated, ord=2,  dim=(1, 2))
+            
+        # return torch.linalg.norm(torch.cat([self.jacobian(x, y) for i in range(len(self.X))], dim=2), ord=2)
     
     def jacobian(self, X, y, weighted=False):
         if weighted:
