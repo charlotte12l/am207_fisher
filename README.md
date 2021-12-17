@@ -27,6 +27,7 @@ Create an Anaconda environment and install the dependencies:
 - fil_torch.py: Our initial exploration to learn the paper, similar to paper's implementation using Pytorch.
 - utils.py: Some util functions.
 - fil_paper_experiments.ipynb: Fully reproduced all the experiments in the paper, including the attacking part.
+- experiments.ipynb: Our own experiments.
 - ood_overfit_experiments.ipynb: Extension I, corresponding to section 6.5.1 & 6.5.2
     Experiment for detecting Out-of-Distribution data and Overfitting.  
 
@@ -46,7 +47,7 @@ Create an Anaconda environment and install the dependencies:
     - We give instances of successes and failures of applying FIL for the MNIST dataset.
 
 - Extensions
-    - FIL for OOD and overfitting detection.
+    - FIL for new applications in OOD and overfitting detection.
 
 ## Reference
 
