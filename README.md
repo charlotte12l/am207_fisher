@@ -16,18 +16,18 @@ The code requires Python 3.7+, PyTorch 1.7.1+, and torchvision 0.8.2+.
 
 Create an Anaconda environment and install the dependencies:
 
-    conda create --name fil
-    conda activate fil
+    conda create --name fil_207
+    conda activate fil_207
     conda install -c pytorch pytorch torchvision
-    pip install gitpython numpy
+    pip install gitpython numpy scikit-learn
     pip install diffprivlib==0.5.0
 
 
 ## How to use
-- fil.py:
-- fil_torch.py:
-- utils.py: 
-- fil_paper_experiments.ipynb
+- fil.py: Our own implementation of FIL.
+- fil_torch.py: Our initial exploration to learn the paper, similar to paper's implementation using Pytorch.
+- utils.py: Some util functions.
+- fil_paper_experiments.ipynb: Fully reproduced all the experiments in the paper, including the attacking part.
 - ood_overfit_experiments.ipynb: Extension I, corresponding to section 6.5.1 & 6.5.2
     Experiment for detecting Out-of-Distribution data and Overfitting.  
 - diff_privacy.ipynb: Extension II
@@ -35,3 +35,5 @@ Create an Anaconda environment and install the dependencies:
 
 
 ## Reference
+
+Measuring Data Leakage in Machine-Learning Models with Fisher Information. Hannun, Awni and Guo, Chuan and van der Maaten, Laurens.
